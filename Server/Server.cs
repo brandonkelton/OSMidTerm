@@ -1,5 +1,4 @@
-﻿using ClientServer.Models;
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,7 +13,7 @@ namespace Server
     class Server
     {
         private ManualResetEvent listenerResetEvent = new ManualResetEvent(false);
-        private ConcurrentBag<Client> clients = new ConcurrentBag<Client>();
+        private ConcurrentDictionary<Guid, Client> clients = new ConcurrentDictionary<Guid, Client>(10, 100);
         private ConcurrentBag<Thread> socketThreads = new ConcurrentBag<Thread>();
         private bool CanServerListen = true;
 
@@ -29,13 +28,12 @@ namespace Server
                 thread.Join();
             });
 
-            clients.ToList().ForEach(client =>
+            clients.Values.ToList().ForEach(client =>
             {
                 if (client.Socket.Connected)
                 {
-                    client.Socket.Disconnect(true);
+                    KillClient(client);
                 }
-                client.Socket.Dispose();
             });
         }
 
@@ -51,48 +49,96 @@ namespace Server
                 while (CanServerListen)
                 {
                     var acceptedSocket = await socket.AcceptAsync();
-                    var processSocketThread = new Thread(new ThreadStart(async () => await ProcessSocket(acceptedSocket)));
-                    processSocketThread.Start();
-                    socketThreads.Add(processSocketThread);
+
+                    Client client;
+                    
+                    try
+                    {
+                        client = CreateClient();
+                    }
+                    catch (InvalidOperationException e)
+                    {
+                        var messageByteString = Encoding.UTF8.GetBytes("Could not accept client. Please try again later.");
+                        var messageBuffer = new ReadOnlyMemory<byte>(messageByteString);
+                        var result = await acceptedSocket.SendAsync(messageBuffer, SocketFlags.None);
+                        acceptedSocket.Close();
+                        acceptedSocket.Disconnect(true);
+                        acceptedSocket.Dispose();
+
+                        continue;
+                    }
+
+                    var thread = new Thread(new ThreadStart(async () => await ProcessSocket(client)));
+                    client.Socket = acceptedSocket;
+                    client.Thread = thread;
+                    thread.Start();
                 }
 
-                socket.Close(1000);
+                socket.Close(10000);
             }
 
             listenerResetEvent.Set();
         }
 
-        private async Task ProcessSocket(Socket socket)
+        private async Task ProcessSocket(Client client)
         {
-            var client = new Client { Socket = socket };
-            clients.Add(client);
-
             var isClientActive = true;
+            var tempIterations = 0;
 
             while (isClientActive)
             {
-                if (!socket.Connected)
+                if (!client.Socket.Connected)
                 {
                     isClientActive = false;
                 }
 
                 var buffer = new Memory<byte>();
-                var result = await socket.ReceiveAsync(buffer, SocketFlags.None);
+                var result = await client.Socket.ReceiveAsync(buffer, SocketFlags.None);
                 Console.WriteLine("ClientResult: " + result);
 
                 var receivedMessage = buffer.ToString();
                 Console.WriteLine("ReceivedMessage: " + receivedMessage);
 
+                if (tempIterations == 3)
+                {
+                    KillClient(client);
 
+                }
             }
         }
 
-        private void DisconnectSocket(Socket socket)
+        private Client CreateClient()
         {
-            if (!socket.Connected)
+            var client = new Client
             {
-                socket.Disconnect(true);
+                Id = Guid.NewGuid()
+            };
+
+            var maxAttempts = 60;
+            var attempts = 0;
+            while (!clients.TryAdd(client.Id, client))
+            {
+                if (attempts >= maxAttempts)
+                {
+                    throw new InvalidOperationException("Error attempting to add client to ConcurrentBag");
+                }
+
+                attempts++;
+                Thread.Sleep(1000);
             }
+
+            return client;
+        }
+
+        private static void KillClient(Client client)
+        {
+            if (client.Socket.Connected)
+            {
+                client.Socket.Close();
+                client.Socket.Disconnect(true);
+            }
+
+            client.Socket.Dispose();
         }
     }
 }
