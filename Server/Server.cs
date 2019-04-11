@@ -14,7 +14,6 @@ namespace Server
     {
         private ManualResetEvent listenerResetEvent = new ManualResetEvent(false);
         private ConcurrentDictionary<Guid, Client> clients = new ConcurrentDictionary<Guid, Client>(10, 100);
-        private ConcurrentBag<Thread> socketThreads = new ConcurrentBag<Thread>();
         private bool CanServerListen = true;
 
         public void StopServer()
@@ -23,9 +22,9 @@ namespace Server
 
             listenerResetEvent.WaitOne();
 
-            socketThreads.ToList().ForEach(thread =>
+            clients.ToList().ForEach(dictionaryItem =>
             {
-                thread.Join();
+                dictionaryItem.Value.Thread.Join();
             });
 
             clients.Values.ToList().ForEach(client =>
