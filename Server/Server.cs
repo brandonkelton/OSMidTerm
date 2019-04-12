@@ -69,6 +69,7 @@ namespace Server
                     }
 
                     var thread = new Thread(new ThreadStart(async () => await ProcessSocket(client)));
+                    client.Endpoint = endpoint;
                     client.Socket = acceptedSocket;
                     client.Thread = thread;
                     thread.Start();
@@ -82,26 +83,22 @@ namespace Server
 
         private static async Task ProcessSocket(Client client)
         {
-            var isClientActive = true;
-            var tempIterations = 0;
-
-            while (isClientActive)
+            while (client.IsActive)
             {
                 if (!client.Socket.Connected)
                 {
-                    isClientActive = false;
+                    client.IsActive = false;
                 }
 
                 var buffer = new Memory<byte>();
-                var result = await client.Socket.ReceiveAsync(buffer, SocketFlags.None);
-                var receivedMessage = Encoding.UTF8.GetString(buffer.ToArray());
-                Console.WriteLine("ReceivedMessage: " + receivedMessage);
+                var receiveResult = await client.Socket.ReceiveAsync(buffer, SocketFlags.None);
+                var command = Encoding.UTF8.GetString(buffer.ToArray());
 
-                if (tempIterations == 3)
-                {
-                    KillClient(client);
+                CommandHandler.Process(command, client);
 
-                }
+                var returnBytes = Encoding.UTF8.GetBytes(client.Message);
+                var returnBuffer = new ReadOnlyMemory<byte>(returnBytes);
+                var sendResult = await client.Socket.SendAsync(returnBuffer, SocketFlags.None);
             }
         }
 
@@ -109,7 +106,8 @@ namespace Server
         {
             var client = new Client
             {
-                Id = Guid.NewGuid()
+                Id = Guid.NewGuid(),
+                IsActive = true
             };
 
             var maxAttempts = 60;
