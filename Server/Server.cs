@@ -10,10 +10,11 @@ using System.Threading.Tasks;
 
 namespace Server
 {
-    class Server
+    public class Server
     {
         private ManualResetEvent listenerResetEvent = new ManualResetEvent(false);
         private ConcurrentDictionary<Guid, Client> clients = new ConcurrentDictionary<Guid, Client>(10, 100);
+
         private bool CanServerListen = true;
 
         public void StopServer()
@@ -36,12 +37,12 @@ namespace Server
             });
         }
 
-        async Task Listen()
+        async Task StartServer()
         {
             var host = Dns.GetHostEntry(Dns.GetHostName());
             var endpoint = new IPEndPoint(host.AddressList[0], IPEndPoint.MaxPort);
 
-            using (var socket = new Socket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp))
+            using (var socket = new Socket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.IP))
             {
                 socket.Listen(100);
 
@@ -79,7 +80,7 @@ namespace Server
             listenerResetEvent.Set();
         }
 
-        private async Task ProcessSocket(Client client)
+        private static async Task ProcessSocket(Client client)
         {
             var isClientActive = true;
             var tempIterations = 0;
@@ -93,9 +94,7 @@ namespace Server
 
                 var buffer = new Memory<byte>();
                 var result = await client.Socket.ReceiveAsync(buffer, SocketFlags.None);
-                Console.WriteLine("ClientResult: " + result);
-
-                var receivedMessage = buffer.ToString();
+                var receivedMessage = Encoding.UTF8.GetString(buffer.ToArray());
                 Console.WriteLine("ReceivedMessage: " + receivedMessage);
 
                 if (tempIterations == 3)
